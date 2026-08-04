@@ -1,0 +1,362 @@
+---
+title: "STATS19 reported road casualties: LA region of `r params$authority`"
+date: today
+params:
+  authority: "Bristol"
+  output_dir: "outputs/Bristol"
+format:
+  html:
+    toc: true
+    toc-location: left
+    embed-resources: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+library(stats19reports)
+library(dplyr)
+library(sf)
+
+la_dir <- params$output_dir
+
+# all objects created by build_la_report_data()
+dat <- readRDS(file.path(la_dir, "data", "la_report_data.rds"))
+list2env(dat, environment())
+
+n_las <- NROW(LAs)
+
+# derived stats for inline text
+osm   <- report_osm_stats(cas_osm_period, cas_osm_year, cas_osm_type)
+spd   <- report_speed_stats(csl)
+imd   <- report_imd_stats(imd_casualties)
+demog <- report_demog_stats(age_sex)
+msoa  <- report_msoa_stats(cas_df_all_LA)
+pave_la <- report_pavement_stats(sing_veh_pave)
+pave_gb <- report_pavement_stats(sing_veh_pave_gb)
+
+fig <- function(...) knitr::include_graphics(file.path(la_dir, ...))
+```
+
+# Introduction
+
+This is a report for the Local Authority (LA) region of `r la_name`, which
+can be reproduced for any LA with the `stats19reports` package (see
+<https://github.com/BlaiseKelly/stats19reports>).
+
+In this report all serious and slight casualty data is based on the adjusted
+data.
+
+`r la_summary_paragraph(LA_LY, LA_YBLY, n_las, YBLY, la_name)`
+
+```{r}
+#| layout-ncol: 3
+fig("plots/national/la_casualties_All_fatal_cas_LY.png")
+fig("plots/national/la_casualties_All_ksi_cas_LY.png")
+fig("plots/national/la_casualties_All_total_cas_LY.png")
+```
+
+`r five_year_sentence(LA_LY, LA_5Y)`
+
+```{r}
+fig("plots/national/rank_All.png")
+```
+
+`r la_summary_paragraph(LA_LY_CYC, LA_YBLY_CYC, n_las, YBLY, la_name, casualty_label = "cyclist")`
+
+```{r}
+#| layout-ncol: 3
+fig("plots/national/la_casualties_Cyclist_fatal_cas_LY.png")
+fig("plots/national/la_casualties_Cyclist_ksi_cas_LY.png")
+fig("plots/national/la_casualties_Cyclist_total_cas_LY.png")
+```
+
+`r five_year_sentence(LA_LY_CYC, LA_5Y_CYC, casualty_label = "cyclists")`
+
+```{r}
+fig("plots/national/rank_Cyclist.png")
+```
+
+`r la_summary_paragraph(LA_LY_PED, LA_YBLY_PED, n_las, YBLY, la_name, casualty_label = "pedestrian")`
+
+```{r}
+#| layout-ncol: 3
+fig("plots/national/la_casualties_Pedestrian_fatal_cas_LY.png")
+fig("plots/national/la_casualties_Pedestrian_ksi_cas_LY.png")
+fig("plots/national/la_casualties_Pedestrian_total_cas_LY.png")
+```
+
+`r five_year_sentence(LA_LY_PED, LA_5Y_PED, casualty_label = "pedestrians")`
+
+```{r}
+fig("plots/national/rank_Pedestrian.png")
+```
+
+## Where in `r la_name`?
+
+The interactive maps saved in `` `r file.path(la_dir, "maps")` `` show the
+location of all collisions between `r base_year` and `r upper_year`, sized
+by severity of the casualties and coloured by variables such as the speed
+limit of the road, with radio buttons to disaggregate by casualty type.
+Clicking on each casualty provides further information. Grouping by street
+using OpenStreetMap data, the OSM maps show the collisions for each street
+coloured by KSI and disaggregated by year; each street can be clicked for a
+pop-up with more details.
+
+## Road Network Analysis
+
+Casualty data was matched to `r osm$n_links` road links from OpenStreetMap
+for the period `r base_year` to `r upper_year`, covering
+`r osm$total_collisions` collisions. The road with the highest number of
+collisions was `r osm$top_road_name` (`r osm$top_road_collisions`), followed
+by `r osm$second_road_name` (`r osm$second_road_collisions`). Across
+`r osm$n_years` years the peak year for collisions on mapped roads was
+`r osm$peak_year` with `r osm$peak_year_n` collisions. By casualty type the
+most common on the OSM network was `r osm$top_type` (`r osm$top_type_n`
+collisions). The table below shows roads by collision count for the full
+period. Click a header to sort the column.
+
+```{r}
+tabulate_osm_roads(cas_osm_period,
+                   save_path = file.path(la_dir, "tables", "cas_osm.html"))
+```
+
+The plots below show collisions on the 2 roads with the most collisions in
+`r la_name`: `r osm$top_road_name` and `r osm$second_road_name`. The plot on
+the left represents the casualties and the plot on the right vehicles
+involved. To see a plot larger, right click and either save or "open in new
+tab".
+
+```{r}
+#| layout-ncol: 2
+n1_rd <- gsub(" ", "_", osm$top_road_name)
+fig("plots/streets", paste0(n1_rd, "_cas_map.png"))
+fig("plots/streets", paste0(n1_rd, "_All_veh_map.png"))
+```
+
+```{r}
+#| layout-ncol: 2
+n2_rd <- gsub(" ", "_", osm$second_road_name)
+fig("plots/streets", paste0(n2_rd, "_cas_map.png"))
+fig("plots/streets", paste0(n2_rd, "_All_veh_map.png"))
+```
+
+## Speed Limits: Casualty rates by road speed limit
+
+In `r la_name`, according to OSM data the majority of roads are
+`r spd$majority_limit`mph (`r spd$majority_pc`%). Between `r base_year` and
+`r upper_year` the majority of collisions (`r spd$max_coll`) happened on
+`r spd$max_coll_limit`mph roads. `r spd$fatal_pc_at_max`% of fatalities
+happened on `r spd$max_fatal_limit`mph roads, which make up
+`r spd$pc_length_30`% of roads in the LA. `r spd$max_serious` casualties
+were seriously injured on `r spd$max_serious_limit`mph roads. Collision
+rates per km are highest for `r spd$max_coll_km_limit`mph roads, fatality
+rates highest on `r spd$max_fatal_km_limit`mph roads, serious injury rates
+highest on `r spd$max_serious_km_limit`mph and slight injury rates
+`r spd$max_slight_km_limit`mph. The collision rate on 20mph roads was
+`r spd$coll_km_20_vs_max`% of the highest rate
+(`r spd$max_coll_km_limit`mph roads), and fatality rates
+`r spd$fatal_km_20_vs_30`% of 30mph roads and `r spd$fatal_km_20_vs_max`%
+of the highest fatality rate (`r spd$max_fatal_km_limit`mph) roads. KSI
+rates were highest on `r spd$max_ksi_km_limit`mph roads,
+`r spd$ksi_km_30_vs_20` times higher on 30mph than 20mph roads.
+
+The chart below shows percentage of fatalities by road speed limit.
+
+```{r}
+fig("plots/conditions/speed_limit_fatal.png")
+```
+
+Applying the 30mph fatality rate (`r spd$fatal_col_30` fatalities per
+collision) to the number of 20mph collisions would give
+`r round(spd$fatal_col_30 * spd$collisions_20)` fatalities. Applying the
+30mph per-km fatality rate to the 20mph road network would give
+`r round(spd$fatal_km_30 * spd$tot_length_20)`
+fatalities.
+
+```{r}
+tabulate_speed_limits(csl, la_name, base_year, upper_year,
+                      save_path = file.path(la_dir, "tables", "cas_col_rate"))
+```
+
+## Grouping by area and IMD
+
+### LSOA
+
+The top left plot below shows the distribution of the population by LSOA
+zone,
+[the most granular population data available for the whole of Great Britain](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/datasets/lowersuperoutputareamidyearpopulationestimates).
+In the top right are the number of total collisions by LSOA zone, calculated
+by intersecting the crash data with the LSOA shape files, and the bottom two
+plots show the home LSOA of casualties and vehicles involved in collisions
+in the city.
+
+```{r}
+fig("plots/lsoa/lsoa_all.png")
+```
+
+### Relationship with Index of Multiple Deprivation Decile (IMD)
+
+The Index of Multiple Deprivation (IMD) is the official measure of relative
+deprivation in England and is part of a suite of outputs that form the
+Indices of Deprivation (IoD), given as a decile in the STATS19 casualty and
+vehicle data for the casualty and driver's home LSOA respectively. It
+follows an established methodological framework in broadly defining
+deprivation to encompass a wide range of an individual's living conditions.
+It is important in road traffic collision analysis because it says something
+about where harm is distributed in society. In `r la_name`,
+`r ifelse(pop_least_imd > 50, pop_least_imd, 100 - pop_least_imd)`% of the
+population fall into the
+`r ifelse(pop_least_imd > 50, "least", "most")` deprived IMD deciles.
+`r ifelse(cas_least_imd > 50, cas_least_imd, 100 - cas_least_imd)`% of
+casualties injured between `r base_year` and `r upper_year` fall into the
+`r ifelse(cas_least_imd > 50, "least", "most")` deprived IMD deciles.
+`r cas_imd_data`% of casualty data had home LSOA.
+
+### IMD and Casualties
+
+The relationship between deprivation and road casualty risk is marked in
+`r la_name`. The most deprived IMD decile (decile 1) accounts for
+`r imd$d1_pc`% of casualties (`r imd$d1_n`), while the least deprived
+(decile 10) accounts for `r imd$d10_pc`% (`r imd$d10_n`). Residents of the
+most deprived areas are `r imd$ratio` times more likely to be a casualty
+than those in the least deprived decile. The decile with the highest number
+of casualties overall is decile `r imd$peak_decile` with `r imd$peak_n`
+casualties (`r imd$peak_pc`%). As noted above, `r cas_imd_data`% of casualty
+records had a home LSOA that could be matched to an IMD decile.
+
+The charts below show a breakdown of the ages, sex, number of KSI and IMD
+decile of casualties in `r la_name`.
+
+```{r}
+#| layout-ncol: 1
+fig("plots/imd/ksi_imd_age.png")
+fig("plots/imd/ksi_imd_sex.png")
+```
+
+Analysis of KSI casualties by IMD decile in `r la_name` reveals that decile
+`r imd$top_imd$IMDDecil`
+(`r ifelse(imd$top_imd$IMDDecil <= 3, "most deprived", ifelse(imd$top_imd$IMDDecil >= 8, "least deprived", "mid-range"))`)
+accounts for the highest KSI total across casualty types combined, with
+approximately `r round(imd$top_imd$ksi)` KSI casualties.
+`r imd$top_type$casualty_type`s represent the highest KSI casualty type
+overall (~`r round(imd$top_type$ksi)`). Pedestrian KSI peaks in decile
+`r imd$top_imd_type$IMDDecil[imd$top_imd_type$casualty_type == "Pedestrian"]`,
+while cyclist KSI is highest in decile
+`r imd$top_imd_type$IMDDecil[imd$top_imd_type$casualty_type == "Cyclist"]`.
+By age, the most affected groups are
+`r imd$top_age_type$dft_age_band[imd$top_age_type$casualty_type == "Pedestrian"]`
+for pedestrians,
+`r imd$top_age_type$dft_age_band[imd$top_age_type$casualty_type == "Cyclist"]`
+for cyclists, and
+`r imd$top_age_type$dft_age_band[imd$top_age_type$casualty_type == "Motorcyclist"]`
+for motorcyclists. Males account for approximately
+`r round(imd$sex_split$ksi[imd$sex_split$sex_of_casualty == "Male"])` KSI
+casualties compared to
+`r round(imd$sex_split$ksi[imd$sex_split$sex_of_casualty == "Female"])` for
+females.
+
+### MSOA
+
+Between LSOA and Local Authority are Middle Layer Super Output Areas
+(MSOA). Because of their relatively consistent size across the country, they
+are a useful unit for analysing data about small local areas, and they have
+also been allocated descriptive names by
+[the House of Commons Library](https://houseofcommonslibrary.github.io/msoanames/),
+making it easier to describe areas. These areas have been used to analyse
+casualties by MSOA region and compare at a country level, similar to what
+has been done with LAs at the beginning of this document, but hopefully
+providing more targeted information for a local area.
+
+Analysing the population weighted IMD from LSOA for MSOA for different
+casualty types, the strongest trends are for
+`r paste(unique(arrange(slope_dat_la, desc(r2))$casualty_type[1:8]), collapse = ", ")`
+casualties as shown in the plot below.
+
+```{r}
+fig("plots/msoa/la_8.png")
+```
+
+The table below shows data for the `r msoa$n_msoa` MSOA areas in `r la_name`
+where casualties live, ranked against other MSOAs nationally. Casualties
+involved in collisions outside of `r la_name` are also included. Between
+`r base_year` and `r upper_year`, the MSOA with the highest number of
+casualties was `r msoa$top_msoa` with `r round(msoa$top_msoa_n)` casualties.
+The most deprived MSOA (by weighted IMD score) was
+`r msoa$most_deprived_msoa` (IMD `r msoa$most_deprived_imd`), while the
+least deprived was `r msoa$least_deprived_msoa` (IMD
+`r msoa$least_deprived_imd`). The highest ranked MSOA regions per capita
+where casualties live in `r la_name` are `r msoa$top_fatal_pcap_msoa`,
+ranked `r msoa$top_fatal_pcap_rank` nationally for fatalities per capita,
+`r msoa$top_ksi_pcap_msoa` ranked `r msoa$top_ksi_pcap_rank` for KSIs, and
+`r msoa$top_serious_pcap_msoa` ranked `r msoa$top_serious_pcap_rank` for
+serious casualties.
+
+```{r}
+tabulate_msoa_ranks(cas_df_all_LA,
+                    save_path = file.path(la_dir, "tables",
+                                          "cas_msoa_rank.html"))
+```
+
+## Casualty Demographics
+
+Between `r base_year` and `r upper_year`, `r demog$male_pc`% of all
+casualties in `r la_name` were male and `r demog$female_pc`% were female.
+Males also accounted for `r demog$male_ksi_pc`% of KSI casualties. The most
+common age band for casualties was `r demog$peak_age` (`r demog$peak_age_pc`%
+of all casualties), while the highest KSI count was among the
+`r demog$peak_ksi_age` age band (`r demog$peak_ksi_age_pc`% of all KSI). The
+table below shows the full breakdown of casualties by age band and sex, with
+severity and the percentage share of KSI and all casualties.
+
+```{r}
+fig("plots/demog/demographics.png")
+```
+
+```{r}
+tabulate_age_sex(age_sex)
+```
+
+## Single Vehicle Pavement Collisions
+
+Between `r base_year` and `r upper_year`, nationally there were
+`r pave_gb$total_collisions` single-vehicle collisions where a pedestrian
+was struck on a footway or verge. `r pave_gb$motor_coll_pc`% involved people
+driving cars, taxis, goods vehicles and buses and `r pave_gb$micro_coll_pc`%
+involved people riding pedal cycles and e-scooters. Of these collisions
+there were `r pave_gb$total_fatal` fatalities; `r pave_gb$motor_fatal_pc`%
+of the fatal collisions were with people driving cars, taxis, goods vehicles
+and buses and `r pave_gb$micro_fatal_pc`% with people riding pedal cycles
+and e-scooters. There were a further `r pave_gb$total_serious` serious
+injuries, of which `r pave_gb$motor_serious_pc`% were with people driving
+cars, taxis, goods vehicles and buses and `r pave_gb$micro_serious_pc`% with
+people riding pedal cycles and e-scooters.
+
+In `r la_name` there were `r pave_la$total_collisions` reported incidents,
+resulting in `r pave_la$total_cas` casualties. The vehicle type most
+commonly involved was `r pave_la$top_type` with `r pave_la$top_coll`
+collisions and `r pave_la$top_n` casualties. `r pave_la$motor_coll_pc`% of
+the vehicles in collisions were driven cars, taxis, goods vehicles and buses
+and `r pave_la$micro_coll_pc`% were ridden pedal cycles and e-scooters. Of
+these collisions there were `r pave_la$total_fatal` fatalities and
+`r pave_la$total_serious` serious injuries, of which
+`r pave_la$motor_serious_pc`% were with people driving cars, taxis, goods
+vehicles and buses and `r pave_la$micro_serious_pc`% with people riding
+pedal cycles and e-scooters.
+
+The plot below visually represents a pavement, with squares for all the KSI
+casualties in `r la_name` coloured by the vehicle that hit them.
+
+```{r}
+fig("plots/streets/KSI_pavements.png")
+```
+
+## Appendix
+
+### Casualty type categorisation
+
+```{r}
+tabulate_casualty_groupings(cas_type)
+```

@@ -1,0 +1,60 @@
+Package: stats19reports
+Title: Local Authority Road Safety Reports from STATS19 Data
+Version: 0.1.0
+Authors@R:
+    person("Blaise", "Kelly", email = "blaise@activeanalytics.nl",
+           role = c("aut", "cre"))
+Description: Builds reproducible road safety reports for any Great Britain
+    Local Authority from DfT 'STATS19' collision, casualty and vehicle data.
+    Summarises casualties by Local Authority, LSOA, MSOA, Index of Multiple
+    Deprivation, OpenStreetMap road link and speed limit; values collisions
+    using DfT 'TAG'/'RAS4001' costs; produces static and interactive 'tmap'
+    maps, 'ggplot2' charts and 'gt'/'reactable' tables; and renders a
+    parameterised 'Quarto' report.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Depends:
+    R (>= 4.1)
+Imports:
+    basemaps,
+    cols4all,
+    dplyr,
+    ggplot2,
+    gt,
+    h3jsr,
+    htmlwidgets,
+    openair,
+    osmactive,
+    purrr,
+    reactable,
+    readODS,
+    readr,
+    rlang,
+    scales,
+    sf,
+    stats19,
+    stplanr,
+    stringr,
+    terra,
+    tidyr,
+    tmap (>= 4.0),
+    tmap.networks,
+    waffle
+Suggests:
+    clock,
+    eurostat,
+    geographr,
+    lubridate,
+    nomisr,
+    quarto,
+    reshape2,
+    testthat (>= 3.0.0)
+Remotes:
+    nptscot/osmactive,
+    humaniverse/geographr,
+    r-tmap/tmap.networks,
+    hrbrmstr/waffle
+URL: https://github.com/BlaiseKelly/stats19reports
+BugReports: https://github.com/BlaiseKelly/stats19reports/issues
+Config/roxygen2/version: 8.0.0
