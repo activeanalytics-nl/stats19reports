@@ -14,6 +14,7 @@ Description: Builds reproducible road safety reports for any Great Britain
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
 Depends:
     R (>= 4.1)
 Imports:
@@ -40,9 +41,12 @@ Imports:
     tidyr,
     tmap (>= 4.0),
     tmap.networks,
+    treemapify,
     waffle
 Suggests:
+    bbplot,
     clock,
+    magick,
     eurostat,
     geographr,
     lubridate,
@@ -51,10 +55,9 @@ Suggests:
     reshape2,
     testthat (>= 3.0.0)
 Remotes:
+    bbc/bbplot,
     nptscot/osmactive,
     humaniverse/geographr,
-    r-tmap/tmap.networks,
-    hrbrmstr/waffle
+    r-tmap/tmap.networks
 URL: https://github.com/BlaiseKelly/stats19reports
 BugReports: https://github.com/BlaiseKelly/stats19reports/issues
-Config/roxygen2/version: 8.0.0
