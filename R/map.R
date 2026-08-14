@@ -644,7 +644,7 @@ cols <- rev(c("#00ab3d", "#005bb2","#c81329"))
 
 #' Custom ggplot2 theme element
 #' @keywords internal
-cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
 
 #' Combined DfT-style ggplot2 theme
 #' @keywords internal

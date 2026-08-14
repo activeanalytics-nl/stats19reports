@@ -1,18 +1,51 @@
-# The LA report data pipeline. This replaces the old R/report.R script (and
-# its stale fork R/pavements.R): everything is now parameterised through
-# build_la_report_data() and decomposed into internal stage functions.
+# The LA report data pipeline. The pipeline is split into sections that
+# correspond to the parts of the rendered report, each cached to its own RDS
+# so slow sections only need to be run once (or re-run individually).
+
+#' Report pipeline section names
+#'
+#' Returns the valid section names for [build_la_report_data()], in run
+#' order, with the report part each corresponds to.
+#'
+#' @return A named character vector: names are section ids, values describe
+#'   the report part they feed.
+#' @examples
+#' report_sections()
+#' @export
+report_sections <- function() {
+  c(rankings     = "Introduction: LA ranking text",
+    national     = "Introduction: national maps and rank charts",
+    interactive  = "Where in <LA>?: interactive maps",
+    osm          = "Road Network Analysis + Speed Limits",
+    conditions   = "Speed Limits / crash condition charts",
+    lsoa         = "Grouping by area: LSOA maps and IMD split",
+    msoa         = "MSOA + IMD and Casualties",
+    demographics = "Casualty Demographics",
+    pavements    = "Single Vehicle Pavement Collisions",
+    costs        = "Collision cost plots and tables")
+}
 
 #' Build all data, plots, maps and tables for an LA report
 #'
-#' Runs the full analysis pipeline for one Local Authority: downloads
-#' STATS19 collision, casualty and vehicle data, computes LA / LSOA / MSOA /
-#' IMD / OSM / speed-limit / pavement / cost summaries, writes all static
-#' plots, interactive maps and tables to \code{output_dir}, and saves the
-#' summary objects needed by the Quarto report template to
-#' \code{output_dir/data/la_report_data.rds}.
+#' Runs the analysis pipeline for one Local Authority, split into sections
+#' that correspond to parts of the report (see [report_sections()]). Each
+#' section saves its outputs to \code{output_dir/data/sections/<name>.rds}
+#' and is skipped on subsequent runs if that file already exists, so
+#' individual sections can be re-run cheaply with \code{overwrite}.
+#'
+#' Shared inputs (STATS19 data, LA boundaries and the crash/casualty/vehicle
+#' subsets for the LA) are downloaded once and cached in
+#' \code{output_dir/data/cache/}; the IMD 2025 GeoPackage likewise. Delete
+#' those files (or the whole \code{data} directory) to force a full refresh.
+#'
+#' After the requested sections run, all available section outputs are
+#' merged into \code{output_dir/data/la_report_data.rds} for
+#' [render_la_report()].
 #'
 #' @param authority Character. Local Authority name (matched against
 #'   \code{LAD22NM} with \code{grepl()}), e.g. \code{"Bristol"}.
+#' @param sections Character. \code{"all"} (default) or any subset of
+#'   \code{names(report_sections())} to run just those parts.
 #' @param base_year,upper_year Integers. Analysis period. Note
 #'   \code{stats19::get_stats19("5 years")} limits how far back data goes.
 #' @param output_dir Character. Root output directory. Default
@@ -21,23 +54,30 @@
 #'   IMD 2025 GeoPackage; \code{NULL} uses the packaged default.
 #' @param la_url Character. URL of the LA boundaries GeoPackage.
 #' @param pop_url Character. URL of the LSOA population CSV.
-#' @param quick Logical. If \code{TRUE}, skips the slow per-street map loops
-#'   and national choropleth grid (useful for testing). Default
-#'   \code{FALSE}.
-#' @return Invisibly, the named list of report objects (also saved as RDS).
+#' @param overwrite Logical. Re-run requested sections even if their cached
+#'   output exists. Default \code{FALSE}.
+#' @param quick Logical. If \code{TRUE}, the \code{osm} section skips the
+#'   slow per-street map loops and static map grid. Default \code{FALSE}.
+#' @return Invisibly, the assembled named list of report objects.
 #' @examples
 #' \dontrun{
-#' build_la_report_data("Bristol", base_year = 2021, upper_year = 2025)
+#' # full run (slow first time; later runs skip completed sections)
+#' build_la_report_data("Bristol")
+#'
+#' # re-run just the MSOA section after changing something
+#' build_la_report_data("Bristol", sections = "msoa", overwrite = TRUE)
 #' }
 #' @export
 build_la_report_data <- function(
     authority,
+    sections = "all",
     base_year = 2021,
     upper_year = 2025,
     output_dir = file.path("outputs", gsub(" ", "_", authority)),
     imd_url = NULL,
     la_url = NULL,
     pop_url = NULL,
+    overwrite = FALSE,
     quick = FALSE) {
 
   # default data URLs (kept out of the signature for readable Rd usage)
@@ -54,25 +94,166 @@ build_la_report_data <- function(
                       "releases/download/v0.1.1/lsoa21_pop_tot_2011_2024.csv")
   }
 
-  la_name <- authority
-  create_report_dirs(output_dir)
-
-  # ---- geography -----------------------------------------------------------
-  LAs <- st_read_retry(la_url)
-
-  city_shp <- dplyr::filter(LAs, grepl(la_name, LAD22NM)) |>
-    sf::st_transform(4326)
-
-  if (NROW(city_shp) == 0) {
-    stop("No Local Authority matched '", la_name, "' in LAD22NM.")
+  all_sections <- names(report_sections())
+  if (identical(sections, "all")) sections <- all_sections
+  bad <- setdiff(sections, all_sections)
+  if (length(bad) > 0) {
+    stop("Unknown section(s): ", paste(bad, collapse = ", "),
+         ". Valid sections: ", paste(all_sections, collapse = ", "))
   }
 
-  message("Gathering data for LA '", la_name, "', matched with ",
-          city_shp$LAD22NM[1])
+  create_report_dirs(output_dir)
+
+  core <- load_report_core(authority, base_year, upper_year, la_url,
+                           output_dir)
+
+  runners <- list(
+    rankings     = function() sec_rankings(core),
+    national     = function() sec_national(core, output_dir),
+    interactive  = function() sec_interactive(core, output_dir),
+    osm          = function() sec_osm(core, output_dir, quick),
+    conditions   = function() sec_conditions(core, output_dir),
+    lsoa         = function() sec_lsoa(core, imd_url, pop_url, output_dir),
+    msoa         = function() sec_msoa(core, imd_url, output_dir),
+    demographics = function() sec_demographics(core, output_dir),
+    pavements    = function() sec_pavements(core, output_dir),
+    costs        = function() sec_costs(core, output_dir)
+  )
+
+  run_report_sections(runners, intersect(all_sections, sections),
+                      output_dir, overwrite)
+
+  invisible(assemble_report_data(output_dir))
+}
+
+#' Merge cached section outputs into the report data file
+#'
+#' Combines the core inputs and every available
+#' \code{data/sections/<name>.rds} into
+#' \code{output_dir/data/la_report_data.rds}, which the Quarto template
+#' reads. Called automatically at the end of [build_la_report_data()];
+#' exported so it can also be run manually after re-running individual
+#' sections.
+#'
+#' @param output_dir Character. Root output directory used by
+#'   [build_la_report_data()].
+#' @return Invisibly, the assembled named list.
+#' @examples
+#' \dontrun{
+#' assemble_report_data("outputs/Bristol")
+#' }
+#' @export
+assemble_report_data <- function(output_dir) {
+
+  core_file <- file.path(output_dir, "data", "cache", "core.rds")
+  if (!file.exists(core_file)) {
+    stop("No core cache found at ", core_file,
+         ". Run build_la_report_data() first.")
+  }
+  core <- readRDS(core_file)
+
+  report_dat <- list(
+    LAs = core$LAs, la_name = core$la_name,
+    base_year = core$base_year, upper_year = core$upper_year,
+    YBLY = core$upper_year - 1,
+    n_local_authorities = NROW(core$LAs),
+    cas_type = casualty_type_lookup[, c("casualty_type", "short_name")]
+  )
+
+  done <- character(0)
+  for (sec in names(report_sections())) {
+    f <- section_file(output_dir, sec)
+    if (file.exists(f)) {
+      report_dat <- utils::modifyList(report_dat, readRDS(f))
+      done <- c(done, sec)
+    }
+  }
+
+  missing <- setdiff(names(report_sections()), done)
+  if (length(missing) > 0) {
+    warning("Sections not yet built (report may not render fully): ",
+            paste(missing, collapse = ", "))
+  }
+
+  saveRDS(report_dat, file.path(output_dir, "data", "la_report_data.rds"))
+  invisible(report_dat)
+}
+
+# --------------------------------------------------------------------------
+# caching helpers
+# --------------------------------------------------------------------------
+
+#' Run a set of section runners with skip-if-done caching
+#' @noRd
+run_report_sections <- function(runners, sections, output_dir, overwrite) {
+  for (sec in sections) {
+    f <- section_file(output_dir, sec)
+    if (file.exists(f) && !overwrite) {
+      message("[", sec, "] cached - skipping (overwrite = TRUE to re-run)")
+      next
+    }
+    message("[", sec, "] running...")
+    t0 <- Sys.time()
+    out <- runners[[sec]]()
+    saveRDS(out, f)
+    message("[", sec, "] done in ",
+            round(difftime(Sys.time(), t0, units = "mins"), 1), " min")
+  }
+  invisible(NULL)
+}
+
+#' Path of a section's cached output
+#' @noRd
+section_file <- function(output_dir, section) {
+  file.path(output_dir, "data", "sections", paste0(section, ".rds"))
+}
+
+#' Load (or build and cache) the shared core inputs
+#'
+#' Geography plus STATS19 collision/casualty/vehicle data for GB and the
+#' LA subsets - the slow downloads every section depends on.
+#' @return A list with LAs, city_shp, la_name, base_year, upper_year,
+#'   crashes_gb, casualties_gb, vehicles_gb, crashes, casualties, vehicles.
+#' @noRd
+load_report_core <- function(authority, base_year, upper_year, la_url,
+                             output_dir, area_type = c("la", "parish")) {
+
+  area_type <- match.arg(area_type)
+
+  core_file <- file.path(output_dir, "data", "cache", "core.rds")
+
+  if (file.exists(core_file)) {
+    core <- readRDS(core_file)
+    if (identical(core$base_year, base_year) &&
+        identical(core$upper_year, upper_year)) {
+      message("[core] using cached STATS19 data and boundaries")
+      return(core)
+    }
+    message("[core] year range changed - rebuilding core cache")
+  }
+
+  message("[core] downloading boundaries and STATS19 data...")
+
+  if (area_type == "parish") {
+    LAs <- NULL
+    city_shp <- get_parish_boundaries(authority) |>
+      sf::st_transform(4326)
+    message("[core] parish '", authority, "' matched")
+  } else {
+    LAs <- st_read_retry(la_url)
+
+    city_shp <- dplyr::filter(LAs, grepl(authority, LAD22NM)) |>
+      sf::st_transform(4326)
+
+    if (NROW(city_shp) == 0) {
+      stop("No Local Authority matched '", authority, "' in LAD22NM.")
+    }
+
+    message("[core] LA '", authority, "' matched with ", city_shp$LAD22NM[1])
+  }
 
   city_shp_m <- sf::st_transform(city_shp, 27700)
 
-  # ---- STATS19 data --------------------------------------------------------
   s19 <- load_report_stats19(base_year, upper_year)
 
   crashes <- s19$crashes_gb[city_shp_m, ]
@@ -81,121 +262,240 @@ build_la_report_data <- function(
   vehicles <- dplyr::filter(s19$vehicles_gb,
                             collision_index %in% crashes$collision_index)
 
-  # ---- LA rankings ---------------------------------------------------------
-  LA_casualties <- summarise_casualties_per_la(
-    casualties = s19$casualties_gb, crashes = s19$crashes_gb, la_geo = LAs,
-    per_capita = TRUE, casualty_types = "All")
-  LA_casualties_cycling <- summarise_casualties_per_la(
-    casualties = s19$casualties_gb, crashes = s19$crashes_gb, la_geo = LAs,
-    per_capita = TRUE, casualty_types = "Cyclist")
-  LA_casualties_pedestrian <- summarise_casualties_per_la(
-    casualties = s19$casualties_gb, crashes = s19$crashes_gb, la_geo = LAs,
-    per_capita = TRUE, casualty_types = "Pedestrian")
-
-  YBLY <- upper_year - 1
-
-  la_year <- function(df, yr) {
-    dplyr::filter(df, collision_year == yr & LAD22NM == city_shp$LAD22NM[1])
-  }
-
-  LA_LY <- la_year(LA_casualties, upper_year)
-  LA_YBLY <- la_year(LA_casualties, YBLY)
-  LA_5Y <- la_year(LA_casualties, base_year)
-  LA_LY_CYC <- la_year(LA_casualties_cycling, upper_year)
-  LA_YBLY_CYC <- la_year(LA_casualties_cycling, YBLY)
-  LA_5Y_CYC <- la_year(LA_casualties_cycling, base_year)
-  LA_LY_PED <- la_year(LA_casualties_pedestrian, upper_year)
-  LA_YBLY_PED <- la_year(LA_casualties_pedestrian, YBLY)
-  LA_5Y_PED <- la_year(LA_casualties_pedestrian, base_year)
-
-  # ---- IMD / LSOA stage ----------------------------------------------------
-  imd_stage <- build_imd_lsoa_stage(
-    crashes = crashes, casualties = casualties, vehicles = vehicles,
-    city_shp = city_shp, imd_url = imd_url, pop_url = pop_url,
-    base_year = base_year, upper_year = upper_year,
-    output_dir = output_dir)
-
-  # ---- OSM network stage ---------------------------------------------------
-  osm_stage <- build_osm_stage(
-    la_name = la_name, crashes = crashes, casualties = casualties,
-    vehicles = vehicles, city_shp = city_shp,
-    base_year = base_year, upper_year = upper_year,
-    output_dir = output_dir, quick = quick)
-
-  # ---- interactive maps ----------------------------------------------------
-  save_interactive_maps(crashes, casualties, city_shp, output_dir)
-
-  # ---- MSOA / IMD relationship stage ---------------------------------------
-  msoa_stage <- build_msoa_stage(
-    la_name = la_name, casualties = casualties,
-    casualties_gb = s19$casualties_gb, IMD_2025 = imd_stage$IMD_2025,
-    decile_match = imd_stage$decile_match, output_dir = output_dir)
-
-  # ---- pavements, costs, conditions, demographics --------------------------
-  sing_veh_pave <- summarise_casualties_pavements(
-    crashes_df = crashes, casualties_df = casualties, vehicles_df = vehicles,
-    base_year = base_year, upper_year = upper_year)
-
-  sing_veh_pave_gb <- summarise_casualties_pavements(
-    crashes_df = s19$crashes_gb, casualties_df = msoa_stage$casualties_simp,
-    vehicles_df = s19$vehicles_gb,
-    base_year = base_year, upper_year = upper_year)
-
-  plot_ksi_pavement(
-    crashes = crashes, casualties = casualties, vehicles = vehicles,
-    base_year = base_year, upper_year = upper_year, plot_rows = 2,
-    plot_width = 200, plot_height = 100,
-    title = paste0("Pedestrians KSI whilst on a pavement or verge, coloured",
-                   " by driven\nvehicle that collided with them between ",
-                   base_year, " and ", upper_year),
-    plot_dir = file.path(output_dir, "plots", "streets"))
-
-  costs <- build_costs_stage(crashes, vehicles, la_name, output_dir)
-
-  save_condition_plots(crashes, casualties, la_name, output_dir)
-
-  if (!quick) {
-    save_national_plots(s19$crashes_gb, s19$casualties_gb, LAs, la_name,
-                        base_year, upper_year, output_dir)
-  }
-
-  plot_casualty_demographics(casualties = casualties, city = la_name,
-                             severity = "ksi", plot_dir = output_dir)
-
-  age_sex <- summarise_casualties_by_demog(casualties = casualties)
-
-  # ---- collect and save ----------------------------------------------------
-  report_dat <- list(
-    LAs = LAs, la_name = la_name,
-    base_year = base_year, upper_year = upper_year, YBLY = YBLY,
-    n_local_authorities = NROW(LAs),
-    LA_LY = LA_LY, LA_YBLY = LA_YBLY, LA_5Y = LA_5Y,
-    LA_LY_CYC = LA_LY_CYC, LA_YBLY_CYC = LA_YBLY_CYC, LA_5Y_CYC = LA_5Y_CYC,
-    LA_LY_PED = LA_LY_PED, LA_YBLY_PED = LA_YBLY_PED, LA_5Y_PED = LA_5Y_PED,
-    pop_least_imd = imd_stage$pop_least_imd,
-    cas_least_imd = imd_stage$cas_least_imd,
-    cas_imd_data = imd_stage$cas_imd_data,
-    imd_casualties = msoa_stage$imd_casualties,
-    slope_dat_ew = msoa_stage$slope_dat_ew,
-    slope_dat_la = msoa_stage$slope_dat_la,
-    cas_df_all_LA = msoa_stage$cas_df_all_LA,
-    csl = osm_stage$csl,
-    cas_osm_period = osm_stage$cas_osm_period,
-    cas_osm_year = osm_stage$cas_osm_year,
-    cas_osm_type = osm_stage$cas_osm_type,
-    sing_veh_pave = sing_veh_pave,
-    sing_veh_pave_gb = sing_veh_pave_gb,
-    cc = costs$cc, cc_mv = costs$cc_mv, cc_spd = costs$cc_spd,
-    tag_costs_col = costs$tag_costs_col,
-    tag_costs_road = costs$tag_costs_road,
-    age_sex = age_sex,
-    cas_type = casualty_type_lookup[, c("casualty_type", "short_name")]
+  core <- list(
+    la_name = authority, base_year = base_year, upper_year = upper_year,
+    LAs = LAs, city_shp = city_shp,
+    crashes_gb = s19$crashes_gb, casualties_gb = s19$casualties_gb,
+    vehicles_gb = s19$vehicles_gb,
+    crashes = crashes, casualties = casualties, vehicles = vehicles
   )
 
-  saveRDS(report_dat,
-          file.path(output_dir, "data", "la_report_data.rds"))
+  saveRDS(core, core_file)
+  core
+}
 
-  invisible(report_dat)
+#' Load (or download and cache) the IMD 2025 LSOA GeoPackage
+#' @noRd
+get_imd_2025 <- function(imd_url, output_dir) {
+  cache <- file.path(output_dir, "data", "cache", "imd2025.rds")
+  if (file.exists(cache)) return(readRDS(cache))
+  message("[imd] downloading IMD 2025 GeoPackage (cached for next time)...")
+  IMD_2025 <- st_read_retry(imd_url)
+  saveRDS(IMD_2025, cache)
+  IMD_2025
+}
+
+#' Load (or build and cache) the OSM driving network for the LA
+#'
+#' Downloads the OSM travel network via osmactive, filters to the public
+#' driving network and clips to the LA boundary. Cached because the
+#' download and filtering are slow and both the osm and interactive
+#' sections need it.
+#' @return A list with drive_net and city_shp_osm.
+#' @noRd
+get_drive_net <- function(la_name, output_dir) {
+
+  cache <- file.path(output_dir, "data", "cache", "drive_net.rds")
+  if (file.exists(cache)) return(readRDS(cache))
+
+  message("[osm] downloading OSM network (cached for next time)...")
+
+  city_shp_osm <- get_la_boundaries(city_name = la_name, source = "ons") |>
+    sf::st_buffer(100) |>
+    sf::st_buffer(-100) |>
+    sf::st_transform(4326)
+
+  area_bb_sf <- sf::st_bbox(city_shp_osm) |>
+    sf::st_as_sfc() |>
+    sf::st_as_sf()
+
+  osm_data <- osmactive::get_travel_network(
+    place = area_bb_sf, boundary = area_bb_sf,
+    boundary_type = "clipsrc", max_file_size = 9e999)
+
+  drive_net <- osmactive::get_driving_network(osm_data) |>
+    dplyr::filter(!service %in% c("alley", "driveway", "parking_aisle",
+                                  "garages", "drive-through", "lay-by",
+                                  "private", "emergency_access", "yard") &
+                    !access %in% c("private", "customers", "emergency",
+                                   "delivery", "permit") &
+                    highway != "service") |>
+    dplyr::mutate(name = ifelse(is.na(name) & highway == "motorway",
+                                ref, name)) |>
+    sf::st_intersection(city_shp_osm)
+
+  out <- list(drive_net = drive_net, city_shp_osm = city_shp_osm)
+  saveRDS(out, cache)
+  out
+}
+
+#' Map STATS19 IMD decile labels to numeric deciles
+#' @noRd
+make_decile_match <- function(casualties) {
+  casualties_imd <- casualties |>
+    dplyr::group_by(casualty_imd_decile) |>
+    dplyr::summarise(all = dplyr::n())
+  data.frame(
+    imd_decile = casualties_imd$casualty_imd_decile[-1],
+    IMDDecil = rev(seq(1, 10, 1)))
+}
+
+# --------------------------------------------------------------------------
+# section runners (each returns the named list saved to its section RDS)
+# --------------------------------------------------------------------------
+
+#' Introduction ranking data: LA summaries for all/cyclist/pedestrian
+#' @noRd
+sec_rankings <- function(core) {
+
+  la_year <- function(df, yr) {
+    dplyr::filter(df, collision_year == yr &
+                    LAD22NM == core$city_shp$LAD22NM[1])
+  }
+
+  LA_casualties <- summarise_casualties_per_la(
+    casualties = core$casualties_gb, crashes = core$crashes_gb,
+    la_geo = core$LAs, per_capita = TRUE, casualty_types = "All")
+  LA_casualties_cycling <- summarise_casualties_per_la(
+    casualties = core$casualties_gb, crashes = core$crashes_gb,
+    la_geo = core$LAs, per_capita = TRUE, casualty_types = "Cyclist")
+  LA_casualties_pedestrian <- summarise_casualties_per_la(
+    casualties = core$casualties_gb, crashes = core$crashes_gb,
+    la_geo = core$LAs, per_capita = TRUE, casualty_types = "Pedestrian")
+
+  YBLY <- core$upper_year - 1
+
+  list(
+    LA_LY = la_year(LA_casualties, core$upper_year),
+    LA_YBLY = la_year(LA_casualties, YBLY),
+    LA_5Y = la_year(LA_casualties, core$base_year),
+    LA_LY_CYC = la_year(LA_casualties_cycling, core$upper_year),
+    LA_YBLY_CYC = la_year(LA_casualties_cycling, YBLY),
+    LA_5Y_CYC = la_year(LA_casualties_cycling, core$base_year),
+    LA_LY_PED = la_year(LA_casualties_pedestrian, core$upper_year),
+    LA_YBLY_PED = la_year(LA_casualties_pedestrian, YBLY),
+    LA_5Y_PED = la_year(LA_casualties_pedestrian, core$base_year)
+  )
+}
+
+#' National choropleth grid and rank charts (Introduction figures)
+#' @noRd
+sec_national <- function(core, output_dir) {
+  save_national_plots(core$crashes_gb, core$casualties_gb, core$LAs,
+                      core$la_name, core$base_year, core$upper_year,
+                      output_dir)
+  list()
+}
+
+#' Interactive casualty and OSM-road maps
+#' @noRd
+sec_interactive <- function(core, output_dir) {
+  net <- get_drive_net(core$la_name, output_dir)
+  save_interactive_maps(core$crashes, core$casualties, core$city_shp,
+                        net$drive_net, output_dir)
+  list()
+}
+
+#' OSM network: road link summaries, speed limit rates, static/street maps
+#' @noRd
+sec_osm <- function(core, output_dir, quick = FALSE) {
+  osm_stage <- build_osm_stage(
+    la_name = core$la_name, crashes = core$crashes,
+    casualties = core$casualties, vehicles = core$vehicles,
+    city_shp = core$city_shp,
+    base_year = core$base_year, upper_year = core$upper_year,
+    output_dir = output_dir, quick = quick)
+
+  list(csl = osm_stage$csl,
+       cas_osm_period = osm_stage$cas_osm_period,
+       cas_osm_year = osm_stage$cas_osm_year,
+       cas_osm_type = osm_stage$cas_osm_type)
+}
+
+#' Crash condition bar charts
+#' @noRd
+sec_conditions <- function(core, output_dir) {
+  save_condition_plots(core$crashes, core$casualties, core$la_name,
+                       output_dir)
+  list()
+}
+
+#' LSOA maps and IMD population split
+#' @noRd
+sec_lsoa <- function(core, imd_url, pop_url, output_dir) {
+  IMD_2025 <- get_imd_2025(imd_url, output_dir)
+  decile_match <- make_decile_match(core$casualties)
+
+  build_imd_lsoa_stage(
+    crashes = core$crashes, casualties = core$casualties,
+    vehicles = core$vehicles, city_shp = core$city_shp,
+    IMD_2025 = IMD_2025, decile_match = decile_match, pop_url = pop_url,
+    base_year = core$base_year, upper_year = core$upper_year,
+    output_dir = output_dir)
+}
+
+#' MSOA rankings, IMD scatter plots and IMD casualty breakdowns
+#' @noRd
+sec_msoa <- function(core, imd_url, output_dir) {
+  IMD_2025 <- get_imd_2025(imd_url, output_dir)
+  decile_match <- make_decile_match(core$casualties)
+
+  msoa_stage <- build_msoa_stage(
+    la_name = core$la_name, casualties = core$casualties,
+    casualties_gb = core$casualties_gb, IMD_2025 = IMD_2025,
+    decile_match = decile_match, output_dir = output_dir)
+
+  list(imd_casualties = msoa_stage$imd_casualties,
+       slope_dat_ew = msoa_stage$slope_dat_ew,
+       slope_dat_la = msoa_stage$slope_dat_la,
+       cas_df_all_LA = msoa_stage$cas_df_all_LA)
+}
+
+#' Casualty demographics plot and age/sex table data
+#' @noRd
+sec_demographics <- function(core, output_dir) {
+  plot_casualty_demographics(casualties = core$casualties,
+                             city = core$la_name, severity = "ksi",
+                             plot_dir = output_dir)
+  list(age_sex = summarise_casualties_by_demog(casualties = core$casualties))
+}
+
+#' Single-vehicle pavement collision summaries and waffle plot
+#' @noRd
+sec_pavements <- function(core, output_dir) {
+
+  casualties_simp <- summarise_casualty_types(core$casualties_gb,
+                                              summary_type = "short_name") |>
+    dplyr::mutate(casualty_type = short_name)
+
+  sing_veh_pave <- summarise_casualties_pavements(
+    crashes_df = core$crashes, casualties_df = core$casualties,
+    vehicles_df = core$vehicles,
+    base_year = core$base_year, upper_year = core$upper_year)
+
+  sing_veh_pave_gb <- summarise_casualties_pavements(
+    crashes_df = core$crashes_gb, casualties_df = casualties_simp,
+    vehicles_df = core$vehicles_gb,
+    base_year = core$base_year, upper_year = core$upper_year)
+
+  plot_ksi_pavement(
+    crashes = core$crashes, casualties = core$casualties,
+    vehicles = core$vehicles,
+    base_year = core$base_year, upper_year = core$upper_year,
+    plot_rows = 2, plot_width = 200, plot_height = 100,
+    plot_dir = file.path(output_dir, "plots", "streets"))
+
+  list(sing_veh_pave = sing_veh_pave, sing_veh_pave_gb = sing_veh_pave_gb)
+}
+
+#' TAG cost summaries, plots and tables
+#' @noRd
+sec_costs <- function(core, output_dir) {
+  costs <- build_costs_stage(core$crashes, core$vehicles, core$la_name,
+                             output_dir)
+  list(cc = costs$cc, cc_mv = costs$cc_mv, cc_spd = costs$cc_spd,
+       tag_costs_col = costs$tag_costs_col,
+       tag_costs_road = costs$tag_costs_road)
 }
 
 #' Create the output directory tree for an LA report
@@ -203,7 +503,8 @@ build_la_report_data <- function(
 #' @return Invisibly, \code{output_dir}.
 #' @noRd
 create_report_dirs <- function(output_dir) {
-  subdirs <- c("data", "plots", "plots/lsoa", "plots/msoa",
+  subdirs <- c("data", "data/cache", "data/sections", "plots",
+               "plots/lsoa", "plots/msoa",
                "plots/osm_links", "plots/streets", "plots/costs",
                "plots/conditions", "plots/demog", "plots/imd",
                "plots/national", "tables", "maps")
@@ -226,7 +527,17 @@ create_report_dirs <- function(output_dir) {
 #' @noRd
 load_report_stats19 <- function(base_year, upper_year) {
 
-  crashes_gb <- stats19::get_stats19("5 years", type = "collision") |>
+  # pick the smallest stats19 download that covers base_year
+  this_yr <- as.numeric(format(Sys.Date(), "%Y"))
+  yrs2get <- if (base_year >= this_yr - 6 && base_year < this_yr - 2) {
+    "5 years"
+  } else if (base_year < this_yr - 6) {
+    "2004"
+  } else {
+    base_year
+  }
+
+  crashes_gb <- stats19::get_stats19(yrs2get, type = "collision") |>
     dplyr::filter(collision_year >= base_year &
                     collision_year <= upper_year) |>
     dplyr::mutate(junction_detail = ifelse(is.na(junction_detail),
@@ -234,7 +545,7 @@ load_report_stats19 <- function(base_year, upper_year) {
                                            junction_detail)) |>
     stats19::format_sf()
 
-  vehicles_gb <- stats19::get_stats19("5 years", type = "vehicle")
+  vehicles_gb <- stats19::get_stats19(yrs2get, type = "vehicle")
 
   if ("escooter_flag" %in% names(vehicles_gb)) {
     vehicles_gb <- vehicles_gb |>
@@ -250,7 +561,7 @@ load_report_stats19 <- function(base_year, upper_year) {
   e_scooter_collisions <- dplyr::filter(vehicles_gb,
                                         vehicle_type == "e-scooter")
 
-  casualties_gb <- stats19::get_stats19("5 years", type = "casualty") |>
+  casualties_gb <- stats19::get_stats19(yrs2get, type = "casualty") |>
     dplyr::mutate(fatal_count = dplyr::if_else(
       casualty_severity == "Fatal", 1, 0)) |>
     dplyr::mutate(casualty_type = ifelse(
@@ -270,8 +581,8 @@ load_report_stats19 <- function(base_year, upper_year) {
 #'   cas_imd_data.
 #' @noRd
 build_imd_lsoa_stage <- function(crashes, casualties, vehicles, city_shp,
-                                 imd_url, pop_url, base_year, upper_year,
-                                 output_dir) {
+                                 IMD_2025, decile_match, pop_url,
+                                 base_year, upper_year, output_dir) {
 
   # casualties by IMD decile
   casualties_imd <- casualties |>
@@ -284,9 +595,6 @@ build_imd_lsoa_stage <- function(crashes, casualties, vehicles, city_shp,
     dplyr::mutate(ML = stringr::str_sub(casualty_imd_decile, 1, 1)) |>
     dplyr::group_by(ML) |>
     dplyr::summarise(pc = sum(pc))
-
-  # IMD 2025 (includes high-res LSOA shapes)
-  IMD_2025 <- st_read_retry(imd_url)
 
   lsoa_boundaries_21 <- dplyr::select(IMD_2025, LSOA21CD, LSOA21NM,
                                       geom = SHAPE) |>
@@ -348,10 +656,6 @@ build_imd_lsoa_stage <- function(crashes, casualties, vehicles, city_shp,
   # deprivation split of city population
   city_imd <- dplyr::filter(IMD_2025, LSOA21CD %in% city_lsoa$LSOA21CD)
 
-  decile_match <- data.frame(
-    imd_decile = casualties_imd$casualty_imd_decile[-1],
-    IMDDecil = rev(seq(1, 10, 1)))
-
   city_imd_pop <- city_imd |>
     dplyr::left_join(city_pop_lsoa, by = c("LSOA21CD" = "LSOA.2021.Code")) |>
     sf::st_set_geometry(NULL) |>
@@ -366,8 +670,6 @@ build_imd_lsoa_stage <- function(crashes, casualties, vehicles, city_shp,
     dplyr::summarise(pc = sum(imd_pc), pop = sum(pop))
 
   list(
-    IMD_2025 = IMD_2025,
-    decile_match = decile_match,
     pop_least_imd = round(city_imd_ML$pc[city_imd_ML$ML == "L"], 1),
     cas_least_imd = round(
       casualties_imd_more_less$pc[casualties_imd_more_less$ML == "L"], 1),
@@ -385,29 +687,9 @@ build_osm_stage <- function(la_name, crashes, casualties, vehicles,
                             city_shp, base_year, upper_year, output_dir,
                             quick = FALSE) {
 
-  city_shp_osm <- get_la_boundaries(city_name = la_name, source = "ons") |>
-    sf::st_buffer(100) |>
-    sf::st_buffer(-100) |>
-    sf::st_transform(4326)
-
-  area_bb_sf <- sf::st_bbox(city_shp_osm) |>
-    sf::st_as_sfc() |>
-    sf::st_as_sf()
-
-  osm_data <- osmactive::get_travel_network(
-    place = area_bb_sf, boundary = area_bb_sf,
-    boundary_type = "clipsrc", max_file_size = 9e999)
-
-  drive_net <- osmactive::get_driving_network(osm_data) |>
-    dplyr::filter(!service %in% c("alley", "driveway", "parking_aisle",
-                                  "garages", "drive-through", "lay-by",
-                                  "private", "emergency_access", "yard") &
-                    !access %in% c("private", "customers", "emergency",
-                                   "delivery", "permit") &
-                    highway != "service") |>
-    dplyr::mutate(name = ifelse(is.na(name) & highway == "motorway",
-                                ref, name)) |>
-    sf::st_intersection(city_shp_osm)
+  net <- get_drive_net(la_name, output_dir)
+  drive_net <- net$drive_net
+  city_shp_osm <- net$city_shp_osm
 
   # road length by speed limit
   speed_limit_length <- drive_net |>
@@ -559,7 +841,7 @@ save_street_maps <- function(cas_osm_period, drive_net, crashes, casualties,
 #' Save the interactive casualty and OSM-road maps
 #' @noRd
 save_interactive_maps <- function(crashes, casualties, city_shp,
-                                  output_dir) {
+                                  drive_net, output_dir) {
 
   for (c in c("Day", "Month", "Year", "Hour", "Sex of casualty",
               "Age group", "Casualty IMD", "Speed limit")) {
@@ -578,6 +860,7 @@ save_interactive_maps <- function(crashes, casualties, city_shp,
     for (g in c("casualty_type", "year")) {
       tm_rds <- map_osm_roads_interactive(crashes = crashes,
                                           casualties = casualties,
+                                          osm_data = drive_net,
                                           group = g, colour_by = c,
                                           area_name = NULL)
       tmap::tmap_save(tm_rds,
@@ -610,9 +893,10 @@ build_msoa_stage <- function(la_name, casualties, casualties_gb, IMD_2025,
   cas_df_all <- cas_df_msoa_all |>
     sf::st_set_geometry(NULL) |>
     dplyr::ungroup() |>
-    dplyr::select(imd_weighted, msoa21hclnm, fatal_pcap, serious_pcap,
+    dplyr::select(imd_weighted, msoa21hclnm, localauthorityname,
+                  fatal_pcap, serious_pcap,
                   slight_pcap, ksi_pcap, total_pcap) |>
-    tidyr::pivot_longer(-c(imd_weighted, msoa21hclnm),
+    tidyr::pivot_longer(-c(imd_weighted, msoa21hclnm, localauthorityname),
                         names_to = "severity",
                         values_to = "casualties_pcap") |>
     dplyr::mutate(severity = gsub("_pcap", "", severity))
@@ -627,12 +911,7 @@ build_msoa_stage <- function(la_name, casualties, casualties_gb, IMD_2025,
                   " types and home MSOA IMD decile for England and Wales"))
   save_png(p0, file.path(output_dir, "plots", "msoa", "EngWal_all.png"))
 
-  msoa_nm <- utils::read.csv(
-    "https://houseofcommonslibrary.github.io/msoanames/MSOA-Names-2.2.csv") |>
-    dplyr::distinct(msoa21hclnm, localauthorityname)
-
   LA_cas_all <- cas_df_all |>
-    dplyr::left_join(msoa_nm, by = "msoa21hclnm") |>
     dplyr::filter(grepl(la_name, localauthorityname))
 
   cas_df_all_LA <- dplyr::filter(cas_df_msoa_all,
@@ -661,8 +940,7 @@ build_msoa_stage <- function(la_name, casualties, casualties_gb, IMD_2025,
   msoa_casualties <- cas_df |>
     dplyr::filter(casualty_type %in% casualty_types) |>
     dplyr::inner_join(msoa_imd) |>
-    sf::st_set_geometry(NULL) |>
-    dplyr::left_join(msoa_nm, by = "msoa21hclnm")
+    sf::st_set_geometry(NULL)
 
   rates <- gsub("_rank", "",
                 unique(names(msoa_casualties)[

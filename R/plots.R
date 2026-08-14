@@ -34,7 +34,7 @@ plot_casualty_index <- function(indexes,
   
   chart_data <- reshape2::melt(indexes, "year")
   
-  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
   dft_theme <- list(cust_theme, ggplot2::scale_color_manual(values = pal))
   
   p <- chart_data %>%
@@ -105,7 +105,7 @@ plot_casualty_demographics <- function(casualties,
     summarise_casualties_by_demog(casualties,severities = c("Fatal", "Serious", "Slight"))
   }
   
-  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
   dft_theme <- list(cust_theme, ggplot2::scale_fill_manual(values = pal))
   
   if (severity == "ksi") {
@@ -176,7 +176,7 @@ plot_casualties_by_year <- function(casualties,
   
   cas_rates <- summarise_casualty_rates(casualties)
   
-  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
   dft_theme <- list(cust_theme, ggplot2::scale_fill_manual(values = pal))
   
   year_count <- cas_rates %>%
@@ -217,7 +217,7 @@ plot_casualties_by_year <- function(casualties,
 #' @param casualties A data frame of casualty records suitable for
 #'   `summarise_casualties_per_collision()`.
 #' @param city Character. City name used in the plot title and filename.
-#'   Default `la_name`.
+#'   Used in the plot title.
 #' @param severities Character vector of severities to include. Default
 #'   `c("Fatal", "Serious", "Slight")`.
 #' @param parameter Character. One of `"road_surface_conditions"`,
@@ -236,7 +236,7 @@ plot_casualties_by_year <- function(casualties,
 #' @export
 plot_crash_conditions <- function(crashes,
                                   casualties,
-                                  city = la_name,
+                                  city,
                                   severities = c("Fatal", "Serious", "Slight"),
                                   parameter = c("road_surface_conditions", "junction_detail",
                                                 "speed_limit", "light_conditions", "weather_conditions"),
@@ -280,7 +280,7 @@ plot_crash_conditions <- function(crashes,
   start_year <- min(crashes_dat$collision_year, na.rm = TRUE)
   end_year <- max(crashes_dat$collision_year, na.rm = TRUE)
   
-  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
   dft_theme <- list(cust_theme, ggplot2::scale_fill_manual(values = pal))
   
   p <- ggplot2::ggplot(crash_parameter,
@@ -316,7 +316,7 @@ plot_crash_conditions <- function(crashes,
 #' @param crash_time Data frame with columns `collision_hr`, `KSI`, and `dow`.
 #' @param report_casualty Character string used in the title (e.g. "casualties").
 #' @param yr2calc Integer. End year of the period.
-#' @param city Character. City name for title. Default `la_name`.
+#' @param city Character. City name for the plot title.
 #' @param plot_dir Directory to save PNG. Default `"plots/"`.
 #' @return Invisibly returns the plot object.
 #' @examples
@@ -328,10 +328,10 @@ plot_crash_conditions <- function(crashes,
 plot_ksi_by_time <- function(crash_time,
                            report_casualty,
                            yr2calc,
-                           city = la_name,
+                           city,
                            plot_dir = "plots/") {
   cols <- rev(c("#ff7733", "#1de9b6", "#006853"))
-  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
   dft_theme <- list(cust_theme, ggplot2::scale_color_manual(values = cols))
   
   p <- crash_time %>%
@@ -390,7 +390,7 @@ plot_summarise_tag_costs <- function(crashes,
   names(chart_0) <- c("year", "cost category", "cost")
   
   pal <- cols4all::c4a("carto.pastel", n = length(unique(chart_0$`cost category`)))
-  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
   dft_theme <- list(cust_theme, ggplot2::scale_fill_manual(values = pal))
   
   sy <- min(chart_0$year, na.rm = TRUE)
@@ -436,7 +436,7 @@ plot_summarise_tag_costs <- function(crashes,
       names(chart_0) <- c("year", "road type", "cost")
       
       pal <- cols4all::c4a("carto.pastel", n = length(unique(chart_0$`road type`)))
-      cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+      cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
       dft_theme <- list(cust_theme, ggplot2::scale_fill_manual(values = pal))
       
       sy <- min(chart_0$year, na.rm = TRUE)
@@ -544,7 +544,7 @@ plot_summarise_tag_costs_speed <- function(crashes,
   }
   
     pal <- cols4all::c4a("carto.pastel", n = length(unique(tag_df$`cost category`)))
-    cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+    cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
     dft_theme <- list(cust_theme, ggplot2::scale_fill_manual(values = pal))
     
     p <- ggplot2::ggplot(tag_df, ggplot2::aes(x = speed_limit, y = cost, fill = `cost category`)) +
@@ -622,7 +622,7 @@ plot_summarise_tag_costs_speed <- function(crashes,
     }
     
     pal <- cols4all::c4a("carto.pastel", n = length(unique(tag_df$`cost category`)))
-    cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+    cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
     dft_theme <- list(cust_theme, ggplot2::scale_fill_manual(values = pal))
     
     p <- ggplot2::ggplot(tag_df, ggplot2::aes(x = speed_limit, y = cost, fill = `cost category`)) +
@@ -662,7 +662,7 @@ plot_summarise_tag_costs_speed <- function(crashes,
 #'
 #' @param crashes Crash data frame.
 #' @param casualties Casualty data frame.
-#' @param city Character. City name for title and filename. Default `la_name`.
+#' @param city Character. City name for the title and filename.
 #' @param severities Character vector of severities to include. Default
 #'   `c("Fatal", "Serious", "Slight")`.
 #' @param plot_width Numeric. Width of saved PNG. Default `20`.
@@ -680,7 +680,7 @@ plot_summarise_tag_costs_speed <- function(crashes,
 #' @export
 plot_casualty_types <- function(crashes,
                                casualties,
-                               city = la_name,
+                               city,
                                severities = c("Fatal", "Serious", "Slight"),
                                plot_width = 11,
                                plot_height = 11,
@@ -724,7 +724,7 @@ plot_casualty_types <- function(crashes,
     dplyr::ungroup() %>%
     dplyr::mutate(pc_total = (value / sum(value)) * 100)
   
-  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
   dft_theme <- list(cust_theme, ggplot2::scale_fill_manual(values = pal))
   
   p <- ggplot2::ggplot(casualty_type_df,
@@ -854,7 +854,7 @@ plot_ksi_pavement = function(crashes,
 #' @export
 plot_la_ranking <- function(crashes,
                          casualties,
-                         LA = la_name,
+                         LA,
                          la_geo,
                          severities = "KSI",
                          casualty_types = "Cyclist",
@@ -897,7 +897,7 @@ plot_la_ranking <- function(crashes,
     pal <- pal_sev$pal[pal_sev$severity %in% severities]
   }
   
-  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(size = 2))
+  cust_theme <- ggplot2::theme(panel.grid.major = ggplot2::element_line(linewidth = 2))
   dft_theme <- list(cust_theme, ggplot2::scale_color_manual(values = pal))
   
   p <- chart_data %>%

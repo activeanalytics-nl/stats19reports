@@ -177,3 +177,38 @@ get_la_boundaries = function(city_name, source = c("ons", "eurostat")){
   }
   
 }
+
+#' Get parish council boundaries for England
+#'
+#' Downloads parish boundaries from the national planning data platform
+#' (\url{https://www.planning.data.gov.uk/}) and returns the polygon(s)
+#' matching a parish name.
+#'
+#' @param parish_name Character. Parish name matched exactly against the
+#'   \code{name} field, e.g. \code{"Winsley"}.
+#' @param parish_url Character. URL of the parish GeoJSON dataset.
+#' @return An \code{sf} polygon of the parish boundary (WGS84).
+#' @examples
+#' \dontrun{
+#' winsley <- get_parish_boundaries("Winsley")
+#' }
+#' @export
+get_parish_boundaries <- function(
+    parish_name,
+    parish_url = "https://files.planning.data.gov.uk/dataset/parish.geojson") {
+
+  pc <- st_read_retry(parish_url)
+
+  out <- dplyr::filter(pc, name == parish_name)
+
+  if (NROW(out) == 0) {
+    stop("No parish matched '", parish_name, "'. Note matching is exact; ",
+         "check capitalisation and spelling.")
+  }
+  if (NROW(out) > 1) {
+    warning(NROW(out), " parishes matched '", parish_name,
+            "' - using all of them. Filter manually if this is wrong.")
+  }
+
+  out
+}

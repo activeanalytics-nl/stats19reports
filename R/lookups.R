@@ -131,3 +131,25 @@ dft_age_labels <- c(
 basemap_options <- c(
   "CartoDB.DarkMatter", "Stadia.AlidadeSmoothDark", "CartoDB.Positron"
 )
+
+#' Coarse vehicle category lookup for pavement analysis
+#'
+#' Maps the \code{short_name} vehicle groupings (see
+#' [vehicle_type_lookup]) to the coarse categories used in the national
+#' pavement collision analysis: motor vehicles, micromobility (pedal
+#' cycles, e-scooters and mobility scooters), trams and unknown.
+#'
+#' @format A data frame with columns \code{short_name} and
+#'   \code{vehicle_cat}.
+#' @examples
+#' vehicle_category_lookup
+#' @export
+vehicle_category_lookup <- data.frame(
+  short_name = c("Car", "Motorcycle", "Taxi", "Bus", "Goods vehicle",
+                 "Agricultural vehicle", "Minibus", "Other vehicle",
+                 "Pedal cycle", "e-scooter", "Mobility scooter",
+                 "Tram", "Horse"),
+  vehicle_cat = c(rep("Motor vehicle", 7), "Unknown",
+                  rep("Bicycle/E-scooter/Mobility Scooter", 3),
+                  "Tram", "Motor vehicle")
+)

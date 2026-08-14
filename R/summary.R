@@ -318,7 +318,7 @@ summarise_casualties_by_demog <- function(casualties,
 #' @export
 summarise_crash_conditions <- function(crashes_df,
                                  casualties,
-                                 city = la_name,
+                                 city,
                                  severities = c("Fatal", "Serious", "Slight"),
                                  parameter = c("road_surface_conditions",
                                                "junction_detail",
@@ -329,14 +329,14 @@ summarise_crash_conditions <- function(crashes_df,
   
   cas_summary <- summarise_casualties_per_collision(casualties)
   
-  cra_cas <- crashes %>%
+  cra_cas <- crashes_df %>%
     sf::st_set_geometry(NULL) %>%
     dplyr::select(collision_index) %>%
     dplyr::left_join(cas_summary, by = "collision_index") %>%
     reshape2::melt(c("collision_index", "collision_year")) %>%
     dplyr::filter(value > 0)
   
-  crashes_dat <- crashes %>%
+  crashes_dat <- crashes_df %>%
     sf::st_set_geometry(NULL) %>%
     dplyr::select(collision_index, collision_year, speed_limit, time,
                   day_of_week, first_road_number, junction_detail,
@@ -1209,7 +1209,7 @@ casualties_per_MSOA <- function(casualties, per_capita = FALSE, by_year = TRUE, 
     select(MSOA21CD,lsoa21_code)
 
     # summarise by region
-    cts_city <- casualties_simp |> 
+    cts_city <- casualties |> 
       left_join(msoa_lsoa, by = c("lsoa_of_casualty" = "lsoa21_code")) |> 
       group_by(MSOA21CD,casualty_type,sex_of_casualty) |> 
       filter(sex_of_casualty %in% casualty_sexes) |> 
@@ -1445,7 +1445,7 @@ summarise_msoa <- function(casualties = NULL, vehicles = NULL, collisions = NULL
   }
   if(!is.null(collisions)){
     
-    groups_lsoa <- crashes |> 
+    groups_lsoa <- collisions |> 
       st_transform(4326) |> 
       st_join(lsoa_geo) |> 
       st_set_geometry(NULL) |> 

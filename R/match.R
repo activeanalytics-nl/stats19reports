@@ -207,7 +207,7 @@ match_msoa_imd = function(IMD_lsoa_data = NULL){
     select(MSOA21CD,lsoa21_code) |> 
     st_set_geometry(NULL)
   
-  msoa_imd <- IMD_2025 |> 
+  msoa_imd <- IMD_lsoa_data |> 
     st_set_geometry(NULL) |> 
     left_join(lsoa_pop, by = c("LSOA21CD" = "lsoa21cd")) |> 
     left_join(msoa_lsoa, by = c("LSOA21CD" = "lsoa21_code")) |> 

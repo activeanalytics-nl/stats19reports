@@ -33,6 +33,11 @@ render_la_report <- function(
   }
 
   data_file <- file.path(output_dir, "data", "la_report_data.rds")
+  core_file <- file.path(output_dir, "data", "cache", "core.rds")
+  if (!file.exists(data_file) && file.exists(core_file)) {
+    # sections have been built but never merged - do it now
+    assemble_report_data(output_dir)
+  }
   if (!file.exists(data_file)) {
     stop("No report data found at ", data_file,
          ". Run build_la_report_data('", authority, "') first.")
